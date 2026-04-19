@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "bigquery": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-bigquery",
+        "--project",
+        "${BIGQUERY_PROJECT}",
+        "--location",
+        "${BIGQUERY_LOCATION}",
+        "--dataset",
+        "${BIGQUERY_DATASET}"
+      ],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS}"
+      }
+    }
+  }
+}
