@@ -3,14 +3,16 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:api-metrika.yandex.net)",
-      "WebFetch(domain:oauth.yandex.ru)"
+      "WebFetch(domain:oauth.yandex.ru)",
+      "WebFetch(domain:neuraldeep.ru)"
     ]
   },
   "sandbox": {
     "network": {
       "allowedDomains": [
         "api-metrika.yandex.net",
-        "oauth.yandex.ru"
+        "oauth.yandex.ru",
+        "neuraldeep.ru"
       ]
     }
   }
