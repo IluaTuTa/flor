@@ -1,0 +1,3 @@
+# Runtime cache and local token — never commit.
+cache/
+config/.env
