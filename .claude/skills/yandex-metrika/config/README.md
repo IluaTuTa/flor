@@ -29,8 +29,23 @@ cp config/.env.example config/.env
    export YANDEX_METRIKA_TOKEN="y0__..."
    ```
 
-## Network (Claude Code sandbox)
+## Network
 
-`api-metrika.yandex.net` and `oauth.yandex.ru` must be in the sandbox egress
-allowlist (`.claude/settings.json` → `sandbox.network.allowedDomains`). The
-allowlist is read at session start, so **restart Claude Code** after changing it.
+### Local Claude Code (bubblewrap sandbox)
+
+`api-metrika.yandex.net` and `oauth.yandex.ru` must be in
+`.claude/settings.json` → `sandbox.network.allowedDomains`. Read at session
+start, so **restart Claude Code** after changing it.
+
+### Claude Code on the web (cloud runner)
+
+`sandbox.network.allowedDomains` has no effect — the cloud runner sits behind
+the Anthropic Egress Gateway. Two options:
+
+1. **Open egress via claude.ai UI** — Settings → Code Environments →
+   *this env* → Network/Egress → add `api-metrika.yandex.net`,
+   `oauth.yandex.ru`. Restart the environment.
+2. **GitHub Actions bridge** — see *Bridge mode* in `SKILL.md`. Requires:
+   - Repo secret `YANDEX_METRIKA_TOKEN` (Settings → Secrets and variables →
+     Actions → New repository secret).
+   - Optional repo variable `YANDEX_METRIKA_COUNTER_ID` for the default counter.

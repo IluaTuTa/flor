@@ -1,0 +1,141 @@
+name: Metrika query (bridge for sandboxed sessions)
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Unique ID (uuid/timestamp) — used as the snapshot filename
+        required: true
+        type: string
+      script:
+        description: Skill script to invoke (no .sh suffix)
+        required: true
+        type: choice
+        options:
+          - counters
+          - goals
+          - counter_info
+          - traffic_summary
+          - conversions
+          - utm_report
+          - search_engines
+          - ecommerce
+          - direct_clients
+          - direct_costs
+          - comparison
+          - metrika_get
+      counter:
+        description: Counter ID (e.g. 32273834)
+        required: false
+        type: string
+      date1:
+        description: Start date YYYY-MM-DD
+        required: false
+        type: string
+      date2:
+        description: End date YYYY-MM-DD
+        required: false
+        type: string
+      extra_args:
+        description: Extra CLI args passed to the script as-is (e.g. "--dimensions ym:s:trafficSource --limit 100")
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: metrika-query-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source on the workflow ref
+        uses: actions/checkout@v4
+
+      - name: Run skill script
+        id: run
+        env:
+          YANDEX_METRIKA_TOKEN: ${{ secrets.YANDEX_METRIKA_TOKEN }}
+          YANDEX_METRIKA_COUNTER_ID: ${{ vars.YANDEX_METRIKA_COUNTER_ID }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          SCRIPT: ${{ inputs.script }}
+          IN_COUNTER: ${{ inputs.counter }}
+          IN_DATE1: ${{ inputs.date1 }}
+          IN_DATE2: ${{ inputs.date2 }}
+          IN_EXTRA: ${{ inputs.extra_args }}
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/out
+
+          script_path=".claude/skills/yandex-metrika/scripts/${SCRIPT}.sh"
+          if [[ ! -f "$script_path" ]]; then
+            echo "no such script: $script_path" > /tmp/out/err.txt
+            echo "rc=2" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Build args from env vars (NOT from ${{ inputs.* }} directly, to avoid
+          # YAML-level shell substitution of untrusted strings).
+          set --
+          [[ -n "$IN_COUNTER" ]] && set -- "$@" --counter "$IN_COUNTER"
+          [[ -n "$IN_DATE1"   ]] && set -- "$@" --date1   "$IN_DATE1"
+          [[ -n "$IN_DATE2"   ]] && set -- "$@" --date2   "$IN_DATE2"
+
+          # extra_args goes through eval to allow proper shell tokenisation
+          # (--key 'value with spaces'). Runs on a private repo, dispatch-only.
+          extra=()
+          if [[ -n "$IN_EXTRA" ]]; then
+            # shellcheck disable=SC2206
+            eval "extra=( $IN_EXTRA )"
+          fi
+
+          set +e
+          bash "$script_path" "$@" "${extra[@]}" \
+            > /tmp/out/result.tsv 2> /tmp/out/err.txt
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Build meta.json
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          SCRIPT: ${{ inputs.script }}
+          RC: ${{ steps.run.outputs.rc }}
+        run: |
+          jq -n \
+            --arg id "$REQUEST_ID" --arg script "$SCRIPT" \
+            --argjson rc "${RC:-0}" --arg ts "$(date -u +%FT%TZ)" \
+            --rawfile err /tmp/out/err.txt \
+            '{request_id:$id, script:$script, exit_code:$rc, timestamp:$ts, stderr:$err}' \
+            > /tmp/out/meta.json
+          touch /tmp/out/result.tsv
+          wc -l /tmp/out/result.tsv
+
+      - name: Commit snapshot to metrika-cache branch
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          RC: ${{ steps.run.outputs.rc }}
+        run: |
+          set -e
+          # Work in a clean directory to avoid mixing with the source checkout.
+          tmpdir="$(mktemp -d)"
+          cd "$tmpdir"
+
+          git init -q -b metrika-cache
+          git config user.email "metrika-bot@users.noreply.github.com"
+          git config user.name  "metrika-bot"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+          if git fetch -q origin metrika-cache; then
+            git reset --hard origin/metrika-cache
+          fi
+
+          mkdir -p snapshots
+          cp /tmp/out/result.tsv "snapshots/${REQUEST_ID}.tsv"
+          cp /tmp/out/meta.json  "snapshots/${REQUEST_ID}.meta.json"
+
+          git add snapshots
+          git commit -m "metrika ${REQUEST_ID} rc=${RC:-0}" -q || { echo "nothing to commit"; exit 0; }
+          git push -q origin metrika-cache

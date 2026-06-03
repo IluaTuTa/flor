@@ -106,6 +106,44 @@ Search the cache: `grep "text" cache/counters.tsv` or `rg "text" cache/`.
 Reporting API ≈ 200 requests / 5 min. On `429` the scripts honour
 `Retry-After` (≤ 60s → wait and retry, otherwise fail with a message).
 
+## Bridge mode (sandboxed sessions, e.g. Claude Code on the web)
+
+When `curl https://api-metrika.yandex.net/` returns `403 host_not_allowed`,
+the runner sits behind the Anthropic Egress Gateway and direct calls are
+blocked. `.claude/settings.json → sandbox.network.allowedDomains` does **not**
+open it (that knob is for local bubblewrap, not cloud egress).
+
+Instead, run queries through the GitHub Actions bridge — workflow
+`.github/workflows/metrika-query.yml`. The workflow runs the same skill
+scripts on a GitHub runner (egress open), then commits the result to the
+orphan branch `metrika-cache` at `snapshots/<request_id>.tsv` +
+`snapshots/<request_id>.meta.json`.
+
+**Setup (one-time):**
+
+1. Add repo secret `YANDEX_METRIKA_TOKEN` (Settings → Secrets and variables → Actions).
+2. Optionally set repo variable `YANDEX_METRIKA_COUNTER_ID` as default.
+3. First run creates the `metrika-cache` branch automatically.
+
+**Usage (per query, what Claude does):**
+
+1. Generate `request_id` (e.g. `yyyymmdd-hhmmss-<short_hash>`).
+2. Trigger the workflow on the current ref:
+   `mcp__github__actions_run_trigger` with
+   `method=run_workflow`, `workflow_id=metrika-query.yml`,
+   inputs: `{request_id, script, counter, date1, date2, extra_args}`.
+   `extra_args` is shell-tokenised (`--dimensions ... --limit ...`).
+3. Poll the latest workflow run for that workflow until `status=completed`:
+   `mcp__github__actions_list` (`list_workflow_runs`, branch=workflow ref).
+4. Read the result:
+   `mcp__github__get_file_contents`
+   `path=snapshots/<request_id>.tsv`, `ref=metrika-cache`.
+   Read `snapshots/<request_id>.meta.json` for `exit_code` and stderr.
+5. Parse and render.
+
+Caveat: bridge round-trip is ~20–30 s. For low-latency work, open egress in
+the claude.ai environment settings or run Claude Code locally.
+
 ## Notes / best-effort mappings
 
 Some dimension/param mappings (`--group` → API `group`, `--source` filter,
